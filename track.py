@@ -1,5 +1,4 @@
 import argparse
-
 import os
 # limit the number of cpus used by high performance libraries
 os.environ["OMP_NUM_THREADS"] = "1"
@@ -7,7 +6,6 @@ os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
-
 import sys
 import numpy as np
 from pathlib import Path
@@ -146,6 +144,7 @@ def run(
     # Run tracking
     dt, seen = [0.0, 0.0, 0.0, 0.0], 0
     curr_frames, prev_frames = [None] * nr_sources, [None] * nr_sources
+    #im和im0s都是列表，列表的长度对应source的个数。每个元素是各个source当前图像，区别是im是经过加工的，比如经过letterbox来resize，而im0s是原始源图像
     for frame_idx, (path, im, im0s, vid_cap) in enumerate(dataset):
         s = ''
         t1 = time_synchronized()
@@ -164,10 +163,12 @@ def run(
         dt[1] += t3 - t2
 
         # Apply NMS
+        #这里的NMS默认只有一张图片，而下面if webcam中im0s[i].copy()是对多个源的图片的操作，暂时没看懂。不过没用到webcam，所以不影响
         pred = non_max_suppression(pred[0], conf_thres, iou_thres, classes, agnostic_nms)
         dt[2] += time_synchronized() - t3
         
         # Process detections
+        #循环中涉及到各个列表的index的i指的都是源视频的编号
         for i, det in enumerate(pred):  # detections per image
             seen += 1
             if webcam:  # nr_sources >= 1
@@ -195,7 +196,7 @@ def run(
             imc = im0.copy() if save_crop else im0  # for save_crop
 
             if cfg.STRONGSORT.ECC:  # camera motion compensation
-                strongsort_list[i].tracker.camera_update(prev_frames[i], curr_frames[i])
+                strongsort_list[i].tracker.camera_update(prev_frames[i], curr_frames[i])#利用前后帧进行运动补偿
 
             if det is not None and len(det):
                 # Rescale boxes from img_size to im0 size
@@ -212,15 +213,18 @@ def run(
 
                 # pass detections to strongsort
                 t4 = time_synchronized()
-                outputs[i] = strongsort_list[i].update(xywhs.cpu(), confs.cpu(), clss.cpu(), im0)
+                outputs[i] = strongsort_list[i].update(xywhs.cpu(), confs.cpu(), clss.cpu(), im0)#可以认为是特征匹配
                 t5 = time_synchronized()
                 dt[3] += t5 - t4
 
                 # draw boxes for visualization
                 if len(outputs[i]) > 0:
                     for j, (output, conf) in enumerate(zip(outputs[i], confs)):
-    
                         bboxes = output[0:4]
+                        """
+                        通过代码分析可知：
+                        追踪的是id,即没出现一个目标就为其分配一个id，id随着目标的个数增加而增加，需要注意的是id不区分类别
+                        """
                         id = output[4]
                         cls = output[5]
 
@@ -231,9 +235,12 @@ def run(
                             bbox_w = output[2] - output[0]
                             bbox_h = output[3] - output[1]
                             # Write MOT compliant results to file
-                            with open(txt_path + '.txt', 'a') as f:
+                            with open(txt_path + '.txt', 'a') as f:#默认保存在runs/track/exp{n}/{与视频同名}.txt中
+                                #写入:帧的编号、目标的id、目标框的信息、视频源编号
+                                # f.write(('%g ' * 10 + '\n') % (frame_idx + 1, id, bbox_left,  # MOT format
+                                #                                bbox_top, bbox_w, bbox_h, -1, -1, -1, i))#i用来区分多个视频源
                                 f.write(('%g ' * 10 + '\n') % (frame_idx + 1, id, bbox_left,  # MOT format
-                                                               bbox_top, bbox_w, bbox_h, -1, -1, -1, i))
+                                                               bbox_top, bbox_w, bbox_h,i))
 
                         if save_vid or save_crop or show_vid:  # Add bbox to image
                             c = int(cls)  # integer class
@@ -241,9 +248,9 @@ def run(
                             label = None if hide_labels else (f'{id} {names[c]}' if hide_conf else \
                                 (f'{id} {conf:.2f}' if hide_class else f'{id} {names[c]} {conf:.2f}'))
                             plot_one_box(bboxes, im0, label=label, color=colors[int(cls)], line_thickness=2)
-                            if save_crop:
-                                txt_file_name = txt_file_name if (isinstance(path, list) and len(path) > 1) else ''
-                                save_one_box(bboxes, imc, file=save_dir / 'crops' / txt_file_name / names[c] / f'{id}' / f'{p.stem}.jpg', BGR=True)
+                            # if save_crop:
+                            #     txt_file_name = txt_file_name if (isinstance(path, list) and len(path) > 1) else ''
+                            #     save_one_box(bboxes, imc, file=save_dir / 'crops' / txt_file_name / names[c] / f'{id}' / f'{p.stem}.jpg', BGR=True)
 
                 print(f'{s}Done. YOLO:({t3 - t2:.3f}s), StrongSORT:({t5 - t4:.3f}s)')
 
@@ -287,7 +294,7 @@ def run(
 def parse_opt():
     parser = argparse.ArgumentParser()
     parser.add_argument('--yolo-weights', nargs='+', type=str, default=WEIGHTS / 'yolov7.pt', help='model.pt path(s)')
-    parser.add_argument('--strong-sort-weights', type=str, default=WEIGHTS / 'osnet_x0_25_msmt17.pt')
+    parser.add_argument('--strong-sort-weights', type=str, default=WEIGHTS / 'osnet_x1_0_msmt17.pt')
     parser.add_argument('--config-strongsort', type=str, default='strong_sort/configs/strong_sort.yaml')
     parser.add_argument('--source', type=str, default='0', help='file/dir/URL/glob, 0 for webcam')  
     parser.add_argument('--imgsz', '--img', '--img-size', nargs='+', type=int, default=[640], help='inference size h,w')
