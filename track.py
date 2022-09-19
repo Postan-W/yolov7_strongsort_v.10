@@ -1,5 +1,6 @@
 import argparse
 import os
+import datetime
 # limit the number of cpus used by high performance libraries
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
@@ -32,7 +33,7 @@ from yolov7.utils.datasets import LoadImages, LoadStreams
 from yolov7.utils.general import (check_img_size, non_max_suppression, scale_coords, check_requirements, cv2,
                                   check_imshow, xyxy2xywh, increment_path, strip_optimizer, colorstr, check_file)
 from yolov7.utils.torch_utils import select_device, time_synchronized
-from yolov7.utils.plots import plot_one_box
+from yolov7.utils.plots import plot_one_box,save_one_box
 from strong_sort.utils.parser import get_config
 from strong_sort.strong_sort import StrongSORT
 
@@ -146,6 +147,7 @@ def run(
     curr_frames, prev_frames = [None] * nr_sources, [None] * nr_sources
     #im和im0s都是列表，列表的长度对应source的个数。每个元素是各个source当前图像，区别是im是经过加工的，比如经过letterbox来resize，而im0s是原始源图像
     for frame_idx, (path, im, im0s, vid_cap) in enumerate(dataset):
+        start_time = datetime.datetime.now()
         s = ''
         t1 = time_synchronized()
         im = torch.from_numpy(im).to(device)
@@ -223,7 +225,7 @@ def run(
                         bboxes = output[0:4]
                         """
                         通过代码分析可知：
-                        追踪的是id,即没出现一个目标就为其分配一个id，id随着目标的个数增加而增加，需要注意的是id不区分类别
+                        追踪的是id,即每出现一个目标就为其分配一个id，id随着目标的个数增加而增加，需要注意的是id不区分类别
                         """
                         id = output[4]
                         cls = output[5]
@@ -239,7 +241,7 @@ def run(
                                 #写入:帧的编号、目标的id、目标框的信息、视频源编号
                                 # f.write(('%g ' * 10 + '\n') % (frame_idx + 1, id, bbox_left,  # MOT format
                                 #                                bbox_top, bbox_w, bbox_h, -1, -1, -1, i))#i用来区分多个视频源
-                                f.write(('%g ' * 10 + '\n') % (frame_idx + 1, id, bbox_left,  # MOT format
+                                f.write(('%g ' * 7 + '\n') % (frame_idx + 1, id, bbox_left,
                                                                bbox_top, bbox_w, bbox_h,i))
 
                         if save_vid or save_crop or show_vid:  # Add bbox to image
@@ -248,14 +250,17 @@ def run(
                             label = None if hide_labels else (f'{id} {names[c]}' if hide_conf else \
                                 (f'{id} {conf:.2f}' if hide_class else f'{id} {names[c]} {conf:.2f}'))
                             plot_one_box(bboxes, im0, label=label, color=colors[int(cls)], line_thickness=2)
-                            # if save_crop:
-                            #     txt_file_name = txt_file_name if (isinstance(path, list) and len(path) > 1) else ''
-                            #     save_one_box(bboxes, imc, file=save_dir / 'crops' / txt_file_name / names[c] / f'{id}' / f'{p.stem}.jpg', BGR=True)
+                            if save_crop:#如果这里有问题，可以参考yolov5的save_crop
+                                txt_file_name = txt_file_name if (isinstance(path, list) and len(path) > 1) else ''
+                                save_one_box(bboxes, imc, file=save_dir / 'crops' / txt_file_name / names[c] / f'{id}' / f'{p.stem}.jpg', BGR=True)
 
-                print(f'{s}Done. YOLO:({t3 - t2:.3f}s), StrongSORT:({t5 - t4:.3f}s)')
-
+                # print(f'{s}Done. YOLO:({t3 - t2:.3f}s), StrongSORT:({t5 - t4:.3f}s)')
+                end_time = datetime.datetime.now()
+                print("一帧耗时:{}".format(end_time - start_time))
             else:
                 strongsort_list[i].increment_ages()
+                end_time = datetime.datetime.now()
+                print("一帧耗时:{}".format(end_time - start_time))
                 print('No detections')
 
             # Stream results
