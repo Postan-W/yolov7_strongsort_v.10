@@ -53,6 +53,7 @@ def run(
         max_det=1000,  # maximum detections per image
         device='',  # cuda device, i.e. 0 or 0,1,2,3 or cpu
         show_vid=False,  # show results
+        save_origin_frame=False,
         save_txt=False,  # save results to *.txt
         save_conf=False,  # save confidences in --save-txt labels
         save_crop=False,  # save cropped prediction boxes
@@ -94,7 +95,10 @@ def run(
     save_dir = increment_path(Path(project) / exp_name, exist_ok=exist_ok)  # increment run
     save_dir = Path(save_dir)
     (save_dir / 'tracks' if save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
-
+    #在这里创建一个文件夹保存原始图片
+    origin_frame_path = os.path.join(save_dir, "origin_frame")
+    if not os.path.exists(origin_frame_path):
+        os.mkdir(origin_frame_path)
     # Load model
     device = select_device(device)
     # model = DetectMultiBackend(yolo_weights, device=device, dnn=dnn, data=None, fp16=half)
@@ -145,8 +149,8 @@ def run(
     # Run tracking
     dt, seen = [0.0, 0.0, 0.0, 0.0], 0
     curr_frames, prev_frames = [None] * nr_sources, [None] * nr_sources
-    #im和im0s都是列表，列表的长度对应source的个数。每个元素是各个source当前图像，区别是im是经过加工的，比如经过letterbox来resize，而im0s是原始源图像
-    for frame_idx, (path, im, im0s, vid_cap) in enumerate(dataset):
+    #im是经过加工的，比如经过letterbox来resize，而im0s是原始源图像。运行的时候只指定一个源，所以im和im0s分别只是一张图像。否则就是列表
+    for frame_idx, (path, im, im0s, vid_cap) in enumerate(dataset):#要想处理多个摄像头，搞清楚dataset的构建方式；或者自己设计
         start_time = datetime.datetime.now()
         s = ''
         t1 = time_synchronized()
@@ -163,14 +167,13 @@ def run(
         pred = model(im)
         t3 = time_synchronized()
         dt[1] += t3 - t2
-
         # Apply NMS
-        #这里的NMS默认只有一张图片，而下面if webcam中im0s[i].copy()是对多个源的图片的操作，暂时没看懂。不过没用到webcam，所以不影响
         pred = non_max_suppression(pred[0], conf_thres, iou_thres, classes, agnostic_nms)
         dt[2] += time_synchronized() - t3
         
         # Process detections
-        #循环中涉及到各个列表的index的i指的都是源视频的编号
+        #循环中涉及到各个列表的index的i指的都是源视频的编号。
+        #实际上只有一张图片，即一个源的。从上面nms实参pred[0]也可以看出只对第一个源的那张图片推理结果做了nms
         for i, det in enumerate(pred):  # detections per image
             seen += 1
             if webcam:  # nr_sources >= 1
@@ -190,8 +193,16 @@ def run(
                 else:
                     txt_file_name = p.parent.name  # get folder name containing current img
                     save_path = str(save_dir / p.parent.name)  # im.jpg, vid.mp4, ...
-
-            curr_frames[i] = im0
+            """
+            注：
+            原代码是curr_frames[i]=im0,这样的问题是二者指向同一个对象。im0在后面经过画框操作(if save_vid or save_crop or show_vid),
+            然后赋给prev_frames[i]，测试prev_frames[i]是带检测框的画面。等处理到下一帧时strongsort_list[i].tracker.camera_update(prev_frames[i], curr_frames[i])中
+            的prev_frames[i]和curr_frames[i]，前者是带检测框的，后者是刚拿到的原始帧，不带框，本人感觉有点怪。
+            本人的理解是tracker是综合前后两帧的信息进行操作，不应该带上一帧的检测框。
+            不过修改前后结果没有明显变化，原因待探究。
+            """
+            # curr_frames[i] = im0
+            curr_frames[i] = im0.copy()
 
             txt_path = str(save_dir / 'tracks' / txt_file_name)  # im.txt
             s += '%gx%g ' % im.shape[2:]  # print string
@@ -229,7 +240,7 @@ def run(
                         """
                         id = output[4]
                         cls = output[5]
-
+                        # cv2.imwrite("")
                         if save_txt:
                             # to MOT format
                             bbox_left = output[0]
@@ -241,8 +252,10 @@ def run(
                                 #写入:帧的编号、目标的id、目标框的信息、视频源编号
                                 # f.write(('%g ' * 10 + '\n') % (frame_idx + 1, id, bbox_left,  # MOT format
                                 #                                bbox_top, bbox_w, bbox_h, -1, -1, -1, i))#i用来区分多个视频源
-                                f.write(('%g ' * 7 + '\n') % (frame_idx + 1, id, bbox_left,
-                                                               bbox_top, bbox_w, bbox_h,i))
+                                # f.write(('%g ' * 7 + '\n') % (frame_idx + 1, id, bbox_left,
+                                #                                bbox_top, bbox_w, bbox_h,i))
+                                #保存每帧上的每个框的whwh(左上右下)坐标。经验证和origin_frame下的frame_idx.jpeg图像上的每个id对应的框可以准确对应
+                                f.write(('%g ' * 7 + '\n') % (frame_idx + 1, id,bboxes[0],bboxes[1],bboxes[2],bboxes[3],i))
 
                         if save_vid or save_crop or show_vid:  # Add bbox to image
                             c = int(cls)  # integer class
@@ -250,7 +263,7 @@ def run(
                             label = None if hide_labels else (f'{id} {names[c]}' if hide_conf else \
                                 (f'{id} {conf:.2f}' if hide_class else f'{id} {names[c]} {conf:.2f}'))
                             plot_one_box(bboxes, im0, label=label, color=colors[int(cls)], line_thickness=2)
-                            if save_crop:#如果这里有问题，可以参考yolov5的save_crop
+                            if save_crop:
                                 txt_file_name = txt_file_name if (isinstance(path, list) and len(path) > 1) else ''
                                 save_one_box(bboxes, imc, file=save_dir / 'crops' / txt_file_name / names[c] / f'{id}' / f'{p.stem}.jpg', BGR=True)
 
@@ -283,6 +296,10 @@ def run(
                     save_path = str(Path(save_path).with_suffix('.mp4'))  # force *.mp4 suffix on results videos
                     vid_writer[i] = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
                 vid_writer[i].write(im0)
+            #这里我保存了原图。curr_frames[i]是不带框的，im0是带框的(因为上面经过了plot_one_box处理)
+            if save_origin_frame:
+                frame_path = os.path.join(origin_frame_path,"{}.jpeg".format(frame_idx))
+                cv2.imwrite(frame_path,im0)
 
             prev_frames[i] = curr_frames[i]
 
@@ -298,6 +315,7 @@ def run(
 
 def parse_opt():
     parser = argparse.ArgumentParser()
+    #每一个参数都会成为parser.parse_args()对象的一个属性，通过vars(parser.parse_args())得到属性和其值的字典；需要注意的是参数名称中的-对应的属性改为_
     parser.add_argument('--yolo-weights', nargs='+', type=str, default=WEIGHTS / 'yolov7.pt', help='model.pt path(s)')
     parser.add_argument('--strong-sort-weights', type=str, default=WEIGHTS / 'osnet_x1_0_msmt17.pt')
     parser.add_argument('--config-strongsort', type=str, default='strong_sort/configs/strong_sort.yaml')
@@ -309,6 +327,7 @@ def parse_opt():
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--show-vid', action='store_true', help='display tracking video results')
     parser.add_argument('--save-txt', action='store_true', help='save results to *.txt')
+    parser.add_argument('--save-origin-frame', action='store_true')#这里我把每一帧保存下来
     parser.add_argument('--save-conf', action='store_true', help='save confidences in --save-txt labels')
     parser.add_argument('--save-crop', action='store_true', help='save cropped prediction boxes')
     parser.add_argument('--save-vid', action='store_true', help='save video tracking results')
