@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import datetime
 # limit the number of cpus used by high performance libraries
@@ -36,7 +37,7 @@ from yolov7.utils.torch_utils import select_device, time_synchronized
 from yolov7.utils.plots import plot_one_box,save_one_box
 from strong_sort.utils.parser import get_config
 from strong_sort.strong_sort import StrongSORT
-
+from customized_tools import draw_area,in_area_or_not
 
 VID_FORMATS = 'asf', 'avi', 'gif', 'm4v', 'mkv', 'mov', 'mp4', 'mpeg', 'mpg', 'ts', 'wmv'  # include video suffixes
 
@@ -51,7 +52,8 @@ def run(
         conf_thres=0.25,  # confidence threshold
         iou_thres=0.45,  # NMS IOU threshold
         max_det=1000,  # maximum detections per image
-        device='',  # cuda device, i.e. 0 or 0,1,2,3 or cpu
+        device='',# cuda device, i.e. 0 or 0,1,2,3 or cpu
+        area='', #like [[[275,753],[847,1019],[1509,281],[1203,153],[275,753]]]
         show_vid=False,  # show results
         save_origin_frame=False,
         save_txt=False,  # save results to *.txt
@@ -74,7 +76,7 @@ def run(
         half=False,  # use FP16 half-precision inference
         dnn=False,  # use OpenCV DNN for ONNX inference
 ):
-
+    detection_area = json.loads(area)
     source = str(source)
     save_img = not nosave and not source.endswith('.txt')  # save inference images
     is_file = Path(source).suffix[1:] in (VID_FORMATS)
@@ -239,8 +241,11 @@ def run(
                         追踪的是id,即每出现一个目标就为其分配一个id，id随着目标的个数增加而增加，需要注意的是id不区分类别
                         """
                         id = output[4]
+                        #做一下资源控制
+                        if int(id) > 1000000:
+                            print("人数过多,退出")
+                            return
                         cls = output[5]
-                        # cv2.imwrite("")
                         if save_txt:
                             # to MOT format
                             bbox_left = output[0]
@@ -262,7 +267,9 @@ def run(
                             id = int(id)  # integer id
                             label = None if hide_labels else (f'{id} {names[c]}' if hide_conf else \
                                 (f'{id} {conf:.2f}' if hide_class else f'{id} {names[c]} {conf:.2f}'))
-                            plot_one_box(bboxes, im0, label=label, color=colors[int(cls)], line_thickness=2)
+                            draw_area(im0,detection_area)
+                            if in_area_or_not(bboxes,detection_area):
+                                plot_one_box(bboxes, im0, label=label, color=colors[int(cls)], line_thickness=2)
                             if save_crop:
                                 txt_file_name = txt_file_name if (isinstance(path, list) and len(path) > 1) else ''
                                 save_one_box(bboxes, imc, file=save_dir / 'crops' / txt_file_name / names[c] / f'{id}' / f'{p.stem}.jpg', BGR=True)
@@ -319,7 +326,8 @@ def parse_opt():
     parser.add_argument('--yolo-weights', nargs='+', type=str, default=WEIGHTS / 'yolov7.pt', help='model.pt path(s)')
     parser.add_argument('--strong-sort-weights', type=str, default=WEIGHTS / 'osnet_x1_0_msmt17.pt')
     parser.add_argument('--config-strongsort', type=str, default='strong_sort/configs/strong_sort.yaml')
-    parser.add_argument('--source', type=str, default='0', help='file/dir/URL/glob, 0 for webcam')  
+    parser.add_argument('--source', type=str, default='0', help='file/dir/URL/glob, 0 for webcam')
+    parser.add_argument('--area', help='the area to detection')
     parser.add_argument('--imgsz', '--img', '--img-size', nargs='+', type=int, default=[640], help='inference size h,w')
     parser.add_argument('--conf-thres', type=float, default=0.5, help='confidence threshold')
     parser.add_argument('--iou-thres', type=float, default=0.5, help='NMS IoU threshold')
