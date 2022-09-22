@@ -58,3 +58,6 @@ def in_area_or_not(bbox,area):
             j = i  # 下次循环时形成下一条边
         res_list.append(res)
     return True in res_list  # 有一个区域中包含该点即可
+
+def calc_time(interval,fps):
+    pass

@@ -3,6 +3,13 @@ track.py(本人电脑使用的环境是yolov7_strongsort)
 指定源视频、要追踪的类别(参见detection_classes.txt)、展示每一帧的追踪结果
 --source
 ./trial_videos/1.mp4
+0  # webcam
+img.jpg  # image
+vid.mp4  # video
+path/  # directory.可以指定一个文件夹比如./trial_videos/，文件夹下的所有视频将被依次处理，而不是并行处理
+path/*.jpg  # glob
+'https://youtu.be/Zgi9g1ksQHc'  # YouTube
+'rtsp://example.com/media.mp4'  # RTSP, RTMP, HTTP stream
 --classes
 0
 --show-vid

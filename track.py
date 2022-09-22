@@ -151,8 +151,13 @@ def run(
     # Run tracking
     dt, seen = [0.0, 0.0, 0.0, 0.0], 0
     curr_frames, prev_frames = [None] * nr_sources, [None] * nr_sources
-    #im是经过加工的，比如经过letterbox来resize，而im0s是原始源图像。运行的时候只指定一个源，所以im和im0s分别只是一张图像。否则就是列表
-    for frame_idx, (path, im, im0s, vid_cap) in enumerate(dataset):#要想处理多个摄像头，搞清楚dataset的构建方式；或者自己设计
+    #im是经过加工的，比如经过letterbox来resize，而im0s是原始源图像。运行的时候只指定一个源，所以im和im0s分别只是一张图像
+    #多个视频是依次被处理的，并不是并行处理，即多摄像头追踪
+    for frame_idx, (path, im, im0s, vid_cap) in enumerate(dataset):
+        """
+        只处理一个视频，所以frame_idx和dataset.frame是一致的。否则的话以dataset.frame为准，因为dataset.frame是当前视频
+        的第frame帧
+        """
         start_time = datetime.datetime.now()
         s = ''
         t1 = time_synchronized()

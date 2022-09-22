@@ -172,14 +172,14 @@ class LoadImages:  # for inference
                 self.cap.release()
                 if self.count == self.nf:  # last video
                     raise StopIteration
-                else:
+                else:#一个视频读完了，如果没有读完所有的视频，那么开始读下一个
                     path = self.files[self.count]
                     self.new_video(path)
                     ret_val, img0 = self.cap.read()
 
             self.frame += 1
-            print(f'video {self.count + 1}/{self.nf} ({self.frame}/{self.nframes}) {path}: ', end='')
-
+            # print(f'video {self.count + 1}/{self.nf} ({self.frame}/{self.nframes}) {path}: ', end='')
+            print(f'video {self.count + 1}/{self.nf} ({self.frame}/{self.nframes}): ', end='')
         else:
             # Read image
             self.count += 1
@@ -199,6 +199,7 @@ class LoadImages:  # for inference
     def new_video(self, path):
         self.frame = 0
         self.cap = cv2.VideoCapture(path)
+        self.fps = self.cap.get(cv2.CAP_PROP_FPS)
         self.nframes = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
     def __len__(self):
