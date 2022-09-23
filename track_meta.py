@@ -14,6 +14,7 @@ from pathlib import Path
 import torch
 import torch.backends.cudnn as cudnn
 from numpy import random
+from random import randint
 
 
 FILE = Path(__file__).resolve()
@@ -151,13 +152,10 @@ def run(
     # Run tracking
     dt, seen = [0.0, 0.0, 0.0, 0.0], 0
     curr_frames, prev_frames = [None] * nr_sources, [None] * nr_sources
-    #im是经过加工的，比如经过letterbox来resize，而im0s是原始源图像。运行的时候只指定一个源，所以im和im0s分别只是一张图像
-    #多个视频是依次被处理的，并不是并行处理，即多摄像头追踪
+    id_time = {}
+    temp_id_set = set({})
+    time_per_frame = round(1/int(dataset.fps),2)
     for frame_idx, (path, im, im0s, vid_cap) in enumerate(dataset):
-        """
-        只处理一个视频，所以frame_idx和dataset.frame是一致的。否则的话以dataset.frame为准，因为dataset.frame是当前视频
-        的第frame帧
-        """
         start_time = datetime.datetime.now()
         s = ''
         t1 = time_synchronized()
@@ -177,10 +175,6 @@ def run(
         # Apply NMS
         pred = non_max_suppression(pred[0], conf_thres, iou_thres, classes, agnostic_nms)
         dt[2] += time_synchronized() - t3
-        
-        # Process detections
-        #循环中涉及到各个列表的index的i指的都是源视频的编号。
-        #实际上只有一张图片，即一个源的。从上面nms实参pred[0]也可以看出只对第一个源的那张图片推理结果做了nms
         for i, det in enumerate(pred):  # detections per image
             seen += 1
             if webcam:  # nr_sources >= 1
@@ -200,14 +194,6 @@ def run(
                 else:
                     txt_file_name = p.parent.name  # get folder name containing current img
                     save_path = str(save_dir / p.parent.name)  # im.jpg, vid.mp4, ...
-            """
-            注：
-            原代码是curr_frames[i]=im0,这样的问题是二者指向同一个对象。im0在后面经过画框操作(if save_vid or save_crop or show_vid),
-            然后赋给prev_frames[i]，测试prev_frames[i]是带检测框的画面。等处理到下一帧时strongsort_list[i].tracker.camera_update(prev_frames[i], curr_frames[i])中
-            的prev_frames[i]和curr_frames[i]，前者是带检测框的，后者是刚拿到的原始帧，不带框，本人感觉有点怪。
-            本人的理解是tracker是综合前后两帧的信息进行操作，不应该带上一帧的检测框。
-            不过修改前后结果没有明显变化，原因待探究。
-            """
             # curr_frames[i] = im0
             curr_frames[i] = im0.copy()
 
@@ -241,15 +227,13 @@ def run(
                 if len(outputs[i]) > 0:
                     for j, (output, conf) in enumerate(zip(outputs[i], confs)):
                         bboxes = output[0:4]
-                        """
-                        通过代码分析可知：
-                        追踪的是id,即每出现一个目标就为其分配一个id，id随着目标的个数增加而增加，需要注意的是id不区分类别
-                        """
                         id = output[4]
-                        #做一下资源控制
-                        if int(id) > 1000000:
-                            print("人数过多,退出")
-                            return
+                        id_record = str(int(id))
+                        temp_id_set.add(id_record)
+                        if id_record in set(id_time.keys()):
+                            id_time[id_record] = round(id_time[id_record] + time_per_frame,2)
+                        else:
+                            id_time[id_record] = 0
                         cls = output[5]
                         if save_txt:
                             # to MOT format
@@ -258,8 +242,8 @@ def run(
                             bbox_w = output[2] - output[0]
                             bbox_h = output[3] - output[1]
                             # Write MOT compliant results to file
-                            with open(txt_path + '.txt', 'a') as f:#默认保存在runs/track/exp{n}/{与视频同名}.txt中
-                                f.write(('%g ' * 7 + '\n') % (i,frame_idx + 1,bboxes[0],bboxes[1],bboxes[2],bboxes[3],id))
+                            with open(txt_path + '.txt', 'a') as f:
+                                f.write(('%g ' * 7 + '\n') % (frame_idx + 1, id,bboxes[0],bboxes[1],bboxes[2],bboxes[3],i))
 
                         if save_vid or save_crop or show_vid:  # Add bbox to image
                             c = int(cls)  # integer class
@@ -268,20 +252,34 @@ def run(
                                 (f'{id} {conf:.2f}' if hide_class else f'{id} {names[c]} {conf:.2f}'))
                             draw_area(im0,detection_area)
                             if in_area_or_not(bboxes,detection_area):
-                                label = str(id)
-                                plot_one_box(bboxes, im0, label=label, color=colors[int(cls)], line_thickness=2)
+                                label = str(id) + "  {}s".format(id_time[id_record])
+                                if id_time[id_record] >= 2:
+                                    #制造不同颜色闪烁的效果
+                                    color_change_list = [(255,0,0),(0,255,0),(255,0,0),(0,255,0)]
+                                    color_index = randint(0,3)
+                                    plot_one_box(bboxes, im0, label=label, color=color_change_list[color_index], line_thickness=2)
+                                else:
+                                    plot_one_box(bboxes, im0, label=label, color=colors[int(cls)], line_thickness=2)
                             if save_crop:
                                 txt_file_name = txt_file_name if (isinstance(path, list) and len(path) > 1) else ''
                                 save_one_box(bboxes, imc, file=save_dir / 'crops' / txt_file_name / names[c] / f'{id}' / f'{p.stem}.jpg', BGR=True)
 
                 # print(f'{s}Done. YOLO:({t3 - t2:.3f}s), StrongSORT:({t5 - t4:.3f}s)')
                 end_time = datetime.datetime.now()
-                print("一帧耗时:{}".format(end_time - start_time))
+                print("总耗时:{}".format(end_time - start_time))
+                print("本帧所有id:{}".format(temp_id_set))
             else:
                 strongsort_list[i].increment_ages()
                 end_time = datetime.datetime.now()
                 print("一帧耗时:{}".format(end_time - start_time))
                 print('No detections')
+
+            #本帧没有检测到的id
+            the_lost = set(id_time.keys()) - temp_id_set
+            print("遗失的id:{}".format(the_lost))
+            for lost_id in the_lost:
+                id_time.pop(lost_id)
+            temp_id_set.clear()#清除当前帧的id。该句是一定要执行的，所以放在条件句外面
 
             # Stream results
             if show_vid:
